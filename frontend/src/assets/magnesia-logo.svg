@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="352" height="144" viewBox="0 0 352 144" role="img" aria-labelledby="magnesia-logo-title">
+  <title id="magnesia-logo-title">Magnesia Mineral Compounds</title>
+  <g fill="none" fill-rule="evenodd">
+    <text x="0" y="104" fill="#06396f" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700" letter-spacing="14">
+      MAGNESIA
+    </text>
+    <text x="70" y="143" fill="#009de0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="9">
+      MINERAL COMPOUNDS
+    </text>
+    <g transform="translate(292 0)">
+      <polygon points="43,1 52,1 59,14 52,27 36,27 29,14 36,1" stroke="#009de0" stroke-width="2" />
+      <polygon points="7,18 23,18 31,32 23,46 7,46 0,32" fill="#009de0" />
+      <polygon points="43,37 59,37 67,51 59,64 43,64 35,51" fill="#78cbe8" />
+    </g>
+  </g>
+</svg>
