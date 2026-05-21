@@ -11,7 +11,7 @@ import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import { useProtocolApi } from "./hooks/useProtocolApi";
 import { initialProtocol } from "./utils/initialProtocol";
 import { COMMANDS, COMMAND_LABELS } from "./utils/commandParser";
-import { readPassword, writePassword, clearPassword } from "./utils/authStorage";
+import { readToken, writeToken, clearToken, clearLegacyPassword } from "./utils/authStorage";
 import "./App.css";
 
 function generateReportNumber() {
@@ -48,9 +48,12 @@ function App() {
   }, []);
 
   const handleUnauthorized = useCallback(() => {
-    clearPassword();
+    clearToken();
     setAuthenticated(false);
-    showError("Sitzung abgelaufen — bitte erneut anmelden.");
+    showError(
+      "Du wurdest abgemeldet — entweder ist die Sitzung abgelaufen oder " +
+        "ein anderer Nutzer hat sich angemeldet. Bitte erneut anmelden."
+    );
   }, [showError]);
 
   const applyStructuredProtocol = useCallback((structured) => {
@@ -75,12 +78,16 @@ function App() {
     transcribeAudio,
     structureTranscript,
     checkHealth,
-    verifyPassword
+    login,
+    logout,
+    verifySession
   } = useProtocolApi({ onUnauthorized: handleUnauthorized });
 
-  // Backend-Health beim Start prüfen.
+  // Backend-Health beim Start prüfen + ggf. gespeichertes Session-Token prüfen.
   useEffect(() => {
     let cancelled = false;
+    // Altlasten aus Vor-Token-Versionen entfernen.
+    clearLegacyPassword();
     checkHealth().then((result) => {
       if (cancelled) return;
       setBackendHealthy(Boolean(result?.ok));
@@ -92,34 +99,48 @@ function App() {
         return;
       }
 
-      const stored = readPassword();
+      const stored = readToken();
       if (!stored) return;
 
-      verifyPassword(stored).then((ok) => {
+      verifySession().then((ok) => {
         if (cancelled) return;
         if (ok) {
           setAuthenticated(true);
         } else {
-          clearPassword();
+          clearToken();
         }
       });
     });
     return () => {
       cancelled = true;
     };
-  }, [checkHealth, verifyPassword]);
+  }, [checkHealth, verifySession]);
 
-  const handleUnlock = useCallback((password) => {
-    writePassword(password);
+  // Periodischer Session-Check: erkennt, wenn die eigene Sitzung durch eine
+  // fremde Anmeldung verdrängt wurde (Single-User-Policy), auch wenn der
+  // Nutzer gerade keine Aktion auslöst.
+  useEffect(() => {
+    if (!authRequired || !authenticated) return undefined;
+    const interval = setInterval(() => {
+      verifySession().then((ok) => {
+        if (!ok) handleUnauthorized();
+      });
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [authRequired, authenticated, verifySession, handleUnauthorized]);
+
+  const handleUnlock = useCallback((token) => {
+    writeToken(token);
     setAuthenticated(true);
     showInfo("Erfolgreich angemeldet.");
   }, [showInfo]);
 
-  const handleSignOut = useCallback(() => {
-    clearPassword();
+  const handleSignOut = useCallback(async () => {
+    await logout();
+    clearToken();
     setAuthenticated(false);
     showInfo("Abgemeldet.");
-  }, [showInfo]);
+  }, [logout, showInfo]);
 
   const appendLiveTranscript = useCallback((chunk) => {
     if (!chunk) return;
@@ -319,7 +340,8 @@ function App() {
     return (
       <PasswordGate
         onUnlock={handleUnlock}
-        verifyPassword={verifyPassword}
+        login={login}
+        incomingNotice={notice?.type === "error" ? notice.message : null}
       />
     );
   }

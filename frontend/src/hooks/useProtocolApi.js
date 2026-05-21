@@ -1,12 +1,12 @@
 import { useCallback, useState } from "react";
-import { readPassword } from "../utils/authStorage";
+import { readToken } from "../utils/authStorage";
 
 const DEFAULT_BACKEND =
   import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
-function authHeaders(passwordOverride) {
-  const password = passwordOverride ?? readPassword();
-  return password ? { "X-App-Password": password } : {};
+function authHeaders() {
+  const token = readToken();
+  return token ? { "X-Session-Token": token } : {};
 }
 
 async function parseJsonOrThrow(response) {
@@ -110,20 +110,46 @@ export function useProtocolApi({ baseUrl = DEFAULT_BACKEND, onUnauthorized } = {
     }
   }, [baseUrl]);
 
-  const verifyPassword = useCallback(
-    async (candidate) => {
+  const login = useCallback(
+    async (password) => {
       try {
-        const response = await fetch(`${baseUrl}/api/auth/verify`, {
-          method: "GET",
-          headers: { ...authHeaders(candidate) }
+        const response = await fetch(`${baseUrl}/api/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password })
         });
-        return response.ok;
+        if (!response.ok) return { ok: false, token: "" };
+        const data = await response.json().catch(() => ({}));
+        return { ok: true, token: data?.token || "" };
       } catch {
-        return false;
+        return { ok: false, token: "" };
       }
     },
     [baseUrl]
   );
+
+  const logout = useCallback(async () => {
+    try {
+      await fetch(`${baseUrl}/api/auth/logout`, {
+        method: "POST",
+        headers: { ...authHeaders() }
+      });
+    } catch {
+      // Netzwerk weg — lokal trotzdem abmelden
+    }
+  }, [baseUrl]);
+
+  const verifySession = useCallback(async () => {
+    try {
+      const response = await fetch(`${baseUrl}/api/auth/verify`, {
+        method: "GET",
+        headers: { ...authHeaders() }
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }, [baseUrl]);
 
   return {
     transcribing,
@@ -131,6 +157,8 @@ export function useProtocolApi({ baseUrl = DEFAULT_BACKEND, onUnauthorized } = {
     transcribeAudio,
     structureTranscript,
     checkHealth,
-    verifyPassword
+    login,
+    logout,
+    verifySession
   };
 }

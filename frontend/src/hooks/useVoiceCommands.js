@@ -6,6 +6,39 @@ function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
+// Fehler, bei denen ein automatischer Neustart aussichtslos ist. Ohne diese
+// Sperre alterniert der Hook im Sekundentakt zwischen "Bereit" und "Inaktiv"
+// (typisches Edge-Symptom, wenn der MS-Speech-Endpoint nicht erreichbar ist).
+const TERMINAL_SPEECH_ERRORS = new Set([
+  "network",
+  "not-allowed",
+  "service-not-allowed",
+  "audio-capture",
+  "language-not-supported"
+]);
+
+function speechErrorMessage(err) {
+  switch (err) {
+    case "network":
+      return (
+        "Spracherkennung-Fehler: Der Cloud-Dienst ist nicht erreichbar. " +
+        "Unter Edge bitte prüfen, ob „Windows-Einstellungen → Datenschutz & Sicherheit → " +
+        "Spracheingabe → Online-Spracherkennung“ aktiviert ist. " +
+        "Auch Firewall, VPN, AdBlocker oder ein Unternehmens-Proxy können den " +
+        "Microsoft-Speech-Endpoint blockieren. Alternativ in Chrome öffnen."
+      );
+    case "not-allowed":
+    case "service-not-allowed":
+      return "Spracherkennung-Fehler: Mikrofon-Berechtigung verweigert oder Dienst blockiert.";
+    case "audio-capture":
+      return "Spracherkennung-Fehler: Kein Mikrofon verfügbar.";
+    case "language-not-supported":
+      return "Spracherkennung-Fehler: Deutsch wird in diesem Browser nicht unterstützt.";
+    default:
+      return `Spracherkennung-Fehler: ${err}`;
+  }
+}
+
 // Eine SpeechRecognition-Instanz erfüllt zwei Zwecke gleichzeitig:
 // 1. Befehlserkennung (Wakeword "Konrad")
 // 2. Live-Transkript-Anzeige (für den Hands-Free-Workflow)
@@ -85,7 +118,23 @@ export function useVoiceCommands({
     recognition.onerror = (event) => {
       // "no-speech" und "aborted" sind unkritisch — onend regelt den Restart.
       if (event.error === "no-speech" || event.error === "aborted") return;
-      onErrorRef.current?.(new Error(`Spracherkennung-Fehler: ${event.error}`));
+
+      if (TERMINAL_SPEECH_ERRORS.has(event.error)) {
+        // Restart-Schleife stoppen, damit der Status nicht im Sekundentakt
+        // zwischen "Bereit" und "Inaktiv" alterniert.
+        shouldListenRef.current = false;
+        if (restartTimerRef.current) {
+          clearTimeout(restartTimerRef.current);
+          restartTimerRef.current = null;
+        }
+        try {
+          recognition.stop();
+        } catch {
+          // ignorieren
+        }
+      }
+
+      onErrorRef.current?.(new Error(speechErrorMessage(event.error)));
     };
 
     recognition.onend = () => {

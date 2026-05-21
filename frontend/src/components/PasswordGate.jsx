@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Lock, Loader2 } from "lucide-react";
 
-export function PasswordGate({ onUnlock, verifyPassword }) {
+export function PasswordGate({ onUnlock, login, incomingNotice }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -15,9 +15,9 @@ export function PasswordGate({ onUnlock, verifyPassword }) {
     setBusy(true);
     setError("");
     try {
-      const ok = await verifyPassword(password);
-      if (ok) {
-        onUnlock(password);
+      const { ok, token } = await login(password);
+      if (ok && token) {
+        onUnlock(token);
       } else {
         setError("Passwort ist falsch oder Backend nicht erreichbar.");
       }
@@ -41,7 +41,8 @@ export function PasswordGate({ onUnlock, verifyPassword }) {
 
         <p className="gate-description">
           Dieser Prototyp ist passwortgeschützt, um Fremdnutzung und unkontrollierte
-          API-Kosten zu verhindern.
+          API-Kosten zu verhindern. Es kann jeweils nur ein Nutzer gleichzeitig
+          angemeldet sein — eine neue Anmeldung beendet die bestehende Sitzung.
         </p>
 
         <label className="gate-label">
@@ -60,6 +61,9 @@ export function PasswordGate({ onUnlock, verifyPassword }) {
           </div>
         </label>
 
+        {!error && incomingNotice && (
+          <div className="gate-error">{incomingNotice}</div>
+        )}
         {error && <div className="gate-error">{error}</div>}
 
         <button type="submit" className="gate-submit" disabled={busy || !password}>

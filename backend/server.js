@@ -4,6 +4,7 @@ import multer from "multer";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import OpenAI from "openai";
 
 dotenv.config();
@@ -18,6 +19,12 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+// Single-User-Session: nur eine aktive Anmeldung gleichzeitig. Jeder
+// erfolgreiche Login erzeugt ein neues Token und ersetzt das vorherige
+// — die zuvor aktive Sitzung wird damit automatisch ungültig (last-login wins).
+// In-Memory: nach einem Server-Restart muss neu angemeldet werden.
+let currentSession = null; // { token: string, createdAt: number }
+
 function timingSafeEqual(a, b) {
   if (typeof a !== "string" || typeof b !== "string") return false;
   if (a.length !== b.length) return false;
@@ -28,13 +35,13 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-function requireAppPassword(req, res, next) {
+function requireSession(req, res, next) {
   if (!AUTH_ENABLED) return next();
-  const provided = req.get("X-App-Password") || "";
-  if (!timingSafeEqual(provided, APP_PASSWORD)) {
+  const provided = req.get("X-Session-Token") || "";
+  if (!currentSession || !timingSafeEqual(provided, currentSession.token)) {
     return res.status(401).json({
       error: "Nicht autorisiert.",
-      details: "App-Passwort fehlt oder ist falsch."
+      details: "Sitzung ungültig oder durch eine andere Anmeldung beendet."
     });
   }
   next();
@@ -64,7 +71,7 @@ app.use(
   cors({
     origin: allowedOrigins.length > 0 ? allowedOrigins : true,
     credentials: false,
-    allowedHeaders: ["Content-Type", "X-App-Password"]
+    allowedHeaders: ["Content-Type", "X-Session-Token"]
   })
 );
 app.use(express.json({ limit: "20mb" }));
@@ -81,12 +88,45 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Verifiziert nur das Passwort — kein Inhalt, keine OpenAI-Kosten.
-app.get("/api/auth/verify", requireAppPassword, (req, res) => {
+// Login: prüft Passwort, erzeugt neues Session-Token, verdrängt eine evtl.
+// vorhandene andere Session. Antwort enthält das Token, das der Client als
+// X-Session-Token-Header bei allen geschützten Endpoints mitsenden muss.
+app.post("/api/auth/login", (req, res) => {
+  if (!AUTH_ENABLED) {
+    return res.json({ ok: true, token: "", authRequired: false });
+  }
+  const password = (req.body && req.body.password) || "";
+  if (!timingSafeEqual(password, APP_PASSWORD)) {
+    return res.status(401).json({
+      error: "Nicht autorisiert.",
+      details: "App-Passwort fehlt oder ist falsch."
+    });
+  }
+  const token = crypto.randomBytes(32).toString("hex");
+  currentSession = { token, createdAt: Date.now() };
+  console.log("Neue Session erzeugt — vorherige Sitzung wurde verdrängt.");
+  res.json({ ok: true, token, authRequired: true });
+});
+
+// Logout: nur die eigene Session wird beendet (verhindert, dass ein fremder
+// Client die aktive Sitzung eines anderen Nutzers killen kann).
+app.post("/api/auth/logout", (req, res) => {
+  if (!AUTH_ENABLED) return res.json({ ok: true });
+  const provided = req.get("X-Session-Token") || "";
+  if (currentSession && timingSafeEqual(provided, currentSession.token)) {
+    currentSession = null;
+  }
   res.json({ ok: true });
 });
 
-app.post("/api/transcribe", requireAppPassword, upload.single("audio"), async (req, res) => {
+// Verifiziert nur die Session — keine Inhalte, keine OpenAI-Kosten.
+// Vom Frontend periodisch aufgerufen, um eine durch fremde Anmeldung
+// beendete Sitzung zu erkennen.
+app.get("/api/auth/verify", requireSession, (req, res) => {
+  res.json({ ok: true });
+});
+
+app.post("/api/transcribe", requireSession, upload.single("audio"), async (req, res) => {
   let uploadedPath = null;
 
   try {
@@ -151,7 +191,7 @@ app.post("/api/transcribe", requireAppPassword, upload.single("audio"), async (r
   }
 });
 
-app.post("/api/structure", requireAppPassword, async (req, res) => {
+app.post("/api/structure", requireSession, async (req, res) => {
   try {
     console.log("Strukturierung angefragt.");
 
